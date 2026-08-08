@@ -6,8 +6,10 @@ from sqlalchemy import pool
 
 from app.core.config import settings
 from app.database.session import Base
+
 from app.models.user import User
 from app.models.chat_message import ChatMessage
+from app.models.company import Company
 
 
 config = context.config
@@ -17,12 +19,11 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
-# Передаём Alembic все наши SQLAlchemy-модели
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
+    """Run migrations in offline mode."""
 
     context.configure(
         url=settings.DATABASE_URL,
@@ -38,7 +39,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
+    """Run migrations in online mode."""
 
     configuration = config.get_section(
         config.config_ini_section,
