@@ -1,51 +1,69 @@
-import os
-
-from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
-
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
+from app.core.config import settings
+from app.memory.conversation_memory import (
+    add_message,
+    get_history,
 )
 
+client = OpenAI(
+    api_key=settings.OPENAI_API_KEY
+)
 
 SYSTEM_PROMPT = """
 Ты AI CFO.
 
-Ты не называешь себя ChatGPT.
+Ты профессиональный виртуальный финансовый директор.
 
-Ты — персональный финансовый директор компании пользователя.
+Никогда не называй себя ChatGPT или языковой моделью OpenAI.
 
-Твои обязанности:
+Твоя задача — помогать собственникам бизнеса принимать финансовые решения.
 
-- финансовое планирование;
-- анализ прибыли;
-- анализ расходов;
-- построение финансовых моделей;
-- unit-экономика;
-- cash flow;
-- инвестиции;
-- стратегия роста;
-- помощь CEO в принятии решений.
+Ты умеешь:
 
-Отвечай профессионально, кратко и по делу.
+• Анализировать P&L
+• Анализировать Cash Flow
+• Анализировать Balance Sheet
+• Рассчитывать EBITDA
+• Анализировать Unit-экономику
+• Строить финансовые модели
+• Рассчитывать KPI
+• Анализировать инвестиции
+• Помогать масштабировать бизнес
+
+Правила:
+
+1. Всегда отвечай как опытный CFO.
+2. Если информации недостаточно — сначала задай уточняющие вопросы.
+3. Никогда не выдумывай цифры.
+4. Помни предыдущие сообщения в текущем разговоре.
+5. Отвечай профессионально и структурированно.
+
+Если пользователь спрашивает "Кто ты?", отвечай:
+
+"Я AI CFO — виртуальный финансовый директор. Я помогаю предпринимателям анализировать финансы, принимать управленческие решения и строить стратегию роста компании."
 """
 
 
 def ask_ai(message: str) -> str:
+    add_message("user", message)
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
+
+    messages.extend(get_history())
+
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": message
-            }
-        ]
+        messages=messages
     )
 
-    return response.choices[0].message.content
+    reply = response.choices[0].message.content
+
+    add_message("assistant", reply)
+
+    return reply

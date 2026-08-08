@@ -1,16 +1,12 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
 
-from app.services.ai_service import ask_ai
+from app.api.chat import router as chat_router
 
 app = FastAPI(
     title="AI CFO",
-    version="0.1.0"
+    version="0.1.0",
+    description="AI CFO Backend API"
 )
-
-
-class ChatRequest(BaseModel):
-    message: str
 
 
 @app.get("/")
@@ -31,10 +27,4 @@ def health():
     }
 
 
-@app.post("/chat")
-def chat(request: ChatRequest):
-    reply = ask_ai(request.message)
-
-    return {
-        "reply": reply
-    }
+app.include_router(chat_router)
