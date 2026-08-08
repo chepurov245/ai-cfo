@@ -1,28 +1,55 @@
-conversation_history = []
+from sqlalchemy.orm import Session
+
+from app.models.chat_message import ChatMessage
 
 
-def add_message(role: str, content: str):
-    conversation_history.append(
-        {
-            "role": role,
-            "content": content
-        }
+def add_message(
+    db: Session,
+    user_id: int,
+    role: str,
+    content: str
+):
+    message = ChatMessage(
+        user_id=user_id,
+        role=role,
+        content=content
     )
 
-    print("\n========== MEMORY ==========")
-    print(conversation_history)
-    print("============================\n")
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+
+    return message
 
 
-def get_history():
-    print("\n========== GET HISTORY ==========")
-    print(conversation_history)
-    print("=================================\n")
+def get_history(
+    db: Session,
+    user_id: int
+):
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.user_id == user_id)
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
 
-    return conversation_history
+    return [
+        {
+            "role": message.role,
+            "content": message.content
+        }
+        for message in messages
+    ]
 
 
-def clear_history():
-    conversation_history.clear()
+def clear_history(
+    db: Session,
+    user_id: int
+):
+    (
+        db.query(ChatMessage)
+        .filter(ChatMessage.user_id == user_id)
+        .delete()
+    )
 
-    print("\n========== MEMORY CLEARED ==========\n")
+    db.commit()

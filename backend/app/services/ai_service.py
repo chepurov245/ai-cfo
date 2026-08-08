@@ -1,52 +1,78 @@
-from openai import OpenAI
+import os
 
-from app.core.config import settings
+from dotenv import load_dotenv
+from openai import OpenAI
+from sqlalchemy.orm import Session
+
 from app.memory.conversation_memory import (
     add_message,
     get_history,
 )
 
+
+load_dotenv()
+
+
 client = OpenAI(
-    api_key=settings.OPENAI_API_KEY
+    api_key=os.getenv("OPENAI_API_KEY")
 )
+
 
 SYSTEM_PROMPT = """
 Ты AI CFO.
 
 Ты профессиональный виртуальный финансовый директор.
 
-Никогда не называй себя ChatGPT или языковой моделью OpenAI.
+Никогда не называй себя ChatGPT, языковой моделью или искусственным интеллектом OpenAI.
 
-Твоя задача — помогать собственникам бизнеса принимать финансовые решения.
+Твоя миссия — помогать владельцам бизнеса принимать правильные финансовые решения.
 
-Ты умеешь:
+Твои компетенции:
 
-• Анализировать P&L
-• Анализировать Cash Flow
-• Анализировать Balance Sheet
-• Рассчитывать EBITDA
-• Анализировать Unit-экономику
-• Строить финансовые модели
-• Рассчитывать KPI
-• Анализировать инвестиции
-• Помогать масштабировать бизнес
+• Финансовый анализ
+• P&L
+• Cash Flow
+• Balance Sheet
+• EBITDA
+• Unit-экономика
+• Финансовое моделирование
+• Бюджетирование
+• KPI
+• Оценка инвестиций
+• Управление рисками
+• Масштабирование бизнеса
 
-Правила:
+Правила работы:
 
 1. Всегда отвечай как опытный CFO.
 2. Если информации недостаточно — сначала задай уточняющие вопросы.
-3. Никогда не выдумывай цифры.
-4. Помни предыдущие сообщения в текущем разговоре.
-5. Отвечай профессионально и структурированно.
-
-Если пользователь спрашивает "Кто ты?", отвечай:
-
-"Я AI CFO — виртуальный финансовый директор. Я помогаю предпринимателям анализировать финансы, принимать управленческие решения и строить стратегию роста компании."
+3. Никогда не придумывай цифры.
+4. Давай практические рекомендации.
+5. Объясняй сложные вещи простым языком.
+6. Отвечай структурированно.
+7. Учитывай предыдущие сообщения пользователя в текущем разговоре.
 """
 
 
-def ask_ai(message: str) -> str:
-    add_message("user", message)
+def ask_ai(
+    db: Session,
+    user_id: int,
+    message: str
+) -> str:
+
+    # Сохраняем сообщение пользователя
+    add_message(
+        db=db,
+        user_id=user_id,
+        role="user",
+        content=message
+    )
+
+    # Получаем историю конкретного пользователя
+    history = get_history(
+        db=db,
+        user_id=user_id
+    )
 
     messages = [
         {
@@ -55,8 +81,9 @@ def ask_ai(message: str) -> str:
         }
     ]
 
-    messages.extend(get_history())
+    messages.extend(history)
 
+    # Отправляем историю модели
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=messages
@@ -64,6 +91,12 @@ def ask_ai(message: str) -> str:
 
     reply = response.choices[0].message.content
 
-    add_message("assistant", reply)
+    # Сохраняем ответ AI
+    add_message(
+        db=db,
+        user_id=user_id,
+        role="assistant",
+        content=reply
+    )
 
     return reply
