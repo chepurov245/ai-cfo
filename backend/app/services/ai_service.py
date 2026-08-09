@@ -4,6 +4,7 @@ from calendar import monthrange
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+import openai
 from dotenv import load_dotenv
 from openai import OpenAI
 from sqlalchemy.orm import Session
@@ -20,7 +21,8 @@ load_dotenv()
 
 
 client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
+    api_key=os.getenv("OPENAI_API_KEY"),
+    timeout=60.0,
 )
 
 
@@ -89,7 +91,7 @@ def parse_date_range(message: str):
     """
     Определяет финансовый период из сообщения пользователя.
 
-    Поддерживаются основные сценарии:
+    Поддерживаются:
 
     - сегодня
     - вчера
@@ -110,14 +112,14 @@ def parse_date_range(message: str):
             hour=0,
             minute=0,
             second=0,
-            microsecond=0
+            microsecond=0,
         )
 
         end = now.replace(
             hour=23,
             minute=59,
             second=59,
-            microsecond=999999
+            microsecond=999999,
         )
 
         return start, end
@@ -130,14 +132,14 @@ def parse_date_range(message: str):
             hour=0,
             minute=0,
             second=0,
-            microsecond=0
+            microsecond=0,
         )
 
         end = yesterday.replace(
             hour=23,
             minute=59,
             second=59,
-            microsecond=999999
+            microsecond=999999,
         )
 
         return start, end
@@ -145,7 +147,6 @@ def parse_date_range(message: str):
     # Последний месяц
     if "последний месяц" in text:
         end = now
-
         start = end - timedelta(days=30)
 
         return start, end
@@ -156,7 +157,7 @@ def parse_date_range(message: str):
         r"(?:\s+\d{4})?"
         r"\s+по\s+(\d{1,2})\s+([а-яё]+)"
         r"(?:\s+\d{4})?",
-        text
+        text,
     )
 
     if range_match:
@@ -178,7 +179,7 @@ def parse_date_range(message: str):
                 start_day,
                 0,
                 0,
-                0
+                0,
             )
 
             end = datetime(
@@ -187,7 +188,7 @@ def parse_date_range(message: str):
                 end_day,
                 23,
                 59,
-                59
+                59,
             )
 
             return start, end
@@ -195,7 +196,7 @@ def parse_date_range(message: str):
     # За 9 августа
     single_day_match = re.search(
         r"(?:за|от)\s+(\d{1,2})\s+([а-яё]+)",
-        text
+        text,
     )
 
     if single_day_match:
@@ -213,7 +214,7 @@ def parse_date_range(message: str):
                 day,
                 0,
                 0,
-                0
+                0,
             )
 
             end = datetime(
@@ -222,7 +223,7 @@ def parse_date_range(message: str):
                 day,
                 23,
                 59,
-                59
+                59,
             )
 
             return start, end
@@ -233,27 +234,29 @@ def parse_date_range(message: str):
         r"(январь|февраль|март|апрель|май|июнь|июль|август|"
         r"сентябрь|октябрь|ноябрь|декабрь)"
         r"(?:\s+(\d{4}))?",
-        text
+        text,
     )
 
     if month_match:
         month_name = month_match.group(1)
         year_text = month_match.group(2)
 
-        month = MONTHS.get(
-            f"{month_name}а"
-            if month_name in ["январь", "февраль", "апрель", "май", "июнь",
-                              "июль", "август", "сентябрь", "октябрь",
-                              "ноябрь", "декабрь"]
-            else month_name
-        )
+        month_map = {
+            "январь": 1,
+            "февраль": 2,
+            "март": 3,
+            "апрель": 4,
+            "май": 5,
+            "июнь": 6,
+            "июль": 7,
+            "август": 8,
+            "сентябрь": 9,
+            "октябрь": 10,
+            "ноябрь": 11,
+            "декабрь": 12,
+        }
 
-        # Отдельно обрабатываем "март", который уже совпадает с ключом.
-        if month_name == "март":
-            month = 3
-
-        if month_name == "май":
-            month = 5
+        month = month_map.get(month_name)
 
         if month:
             year = int(year_text) if year_text else now.year
@@ -266,7 +269,7 @@ def parse_date_range(message: str):
                 1,
                 0,
                 0,
-                0
+                0,
             )
 
             end = datetime(
@@ -275,7 +278,7 @@ def parse_date_range(message: str):
                 last_day,
                 23,
                 59,
-                59
+                59,
             )
 
             return start, end
@@ -287,7 +290,7 @@ def get_financial_context(
     db: Session,
     user_id: int,
     start_date: datetime | None = None,
-    end_date: datetime | None = None
+    end_date: datetime | None = None,
 ) -> str:
 
     company = (
@@ -323,7 +326,7 @@ def get_financial_context(
             for transaction in transactions
             if transaction.type == "income"
         ),
-        Decimal("0")
+        Decimal("0"),
     )
 
     total_expense = sum(
@@ -332,7 +335,7 @@ def get_financial_context(
             for transaction in transactions
             if transaction.type == "expense"
         ),
-        Decimal("0")
+        Decimal("0"),
     )
 
     profit = total_income - total_expense
@@ -361,7 +364,7 @@ def get_financial_context(
         sorted(
             expenses_by_category.items(),
             key=lambda item: item[1],
-            reverse=True
+            reverse=True,
         )
     )
 
@@ -413,7 +416,7 @@ def get_financial_context(
 def ask_ai(
     db: Session,
     user_id: int,
-    message: str
+    message: str,
 ) -> str:
 
     # Сохраняем сообщение пользователя
@@ -421,7 +424,7 @@ def ask_ai(
         db=db,
         user_id=user_id,
         role="user",
-        content=message
+        content=message,
     )
 
     # Определяем финансовый период из вопроса
@@ -430,7 +433,7 @@ def ask_ai(
     # Получаем историю конкретного пользователя
     history = get_history(
         db=db,
-        user_id=user_id
+        user_id=user_id,
     )
 
     # Получаем актуальные финансовые данные
@@ -438,35 +441,72 @@ def ask_ai(
         db=db,
         user_id=user_id,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
     )
 
     messages = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT
+            "content": SYSTEM_PROMPT,
         },
         {
             "role": "system",
-            "content": financial_context
-        }
+            "content": financial_context,
+        },
     ]
 
     messages.extend(history)
 
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=messages
-    )
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=messages,
+        )
 
-    reply = response.choices[0].message.content
+        reply = response.choices[0].message.content
+
+    except openai.APITimeoutError:
+        reply = (
+            "Сервис финансового анализа временно не ответил вовремя. "
+            "Ваш запрос не потерян. Попробуйте отправить его ещё раз."
+        )
+
+    except openai.RateLimitError:
+        reply = (
+            "Сервис финансового анализа сейчас перегружен. "
+            "Попробуйте повторить запрос немного позже."
+        )
+
+    except openai.AuthenticationError:
+        reply = (
+            "Не удалось выполнить финансовый анализ: "
+            "проверьте настройки OpenAI API."
+        )
+
+    except openai.APIConnectionError:
+        reply = (
+            "Не удалось установить соединение с сервисом финансового анализа. "
+            "Проверьте подключение и попробуйте ещё раз."
+        )
+
+    except openai.APIStatusError:
+        reply = (
+            "Сервис финансового анализа временно недоступен. "
+            "Попробуйте повторить запрос позже."
+        )
+
+    except openai.APIError:
+        reply = (
+            "Произошла ошибка при выполнении финансового анализа. "
+            "Попробуйте повторить запрос позже."
+        )
 
     # Сохраняем ответ AI
     add_message(
         db=db,
         user_id=user_id,
         role="assistant",
-        content=reply
+        content=reply,
     )
 
     return reply
