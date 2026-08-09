@@ -10,6 +10,7 @@ from app.database.session import Base
 from app.models.user import User
 from app.models.chat_message import ChatMessage
 from app.models.company import Company
+from app.models.transaction import Transaction
 
 
 config = context.config

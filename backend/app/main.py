@@ -3,6 +3,8 @@ from fastapi import FastAPI
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.companies import router as companies_router
+from app.api.financials import router as financials_router
+from app.api.transactions import router as transactions_router
 
 
 app = FastAPI(
@@ -33,3 +35,5 @@ def health():
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(companies_router)
+app.include_router(transactions_router)
+app.include_router(financials_router)
