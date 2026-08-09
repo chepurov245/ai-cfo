@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,6 +20,8 @@ router = APIRouter(
 @router.get("/summary")
 def get_financial_summary(
     company_id: int,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -37,11 +40,28 @@ def get_financial_summary(
             detail="Company not found"
         )
 
-    transactions = (
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date must be before end_date"
+        )
+
+    query = (
         db.query(Transaction)
         .filter(Transaction.company_id == company.id)
-        .all()
     )
+
+    if start_date:
+        query = query.filter(
+            Transaction.transaction_date >= start_date
+        )
+
+    if end_date:
+        query = query.filter(
+            Transaction.transaction_date <= end_date
+        )
+
+    transactions = query.all()
 
     total_income = sum(
         (
@@ -94,6 +114,8 @@ def get_financial_summary(
     return {
         "company_id": company.id,
         "currency": company.currency,
+        "start_date": start_date,
+        "end_date": end_date,
         "total_income": total_income,
         "total_expense": total_expense,
         "profit": profit,
