@@ -63,11 +63,19 @@ def get_financial_summary(
 
     profit = total_income - total_expense
 
+    if total_income > 0:
+        profit_margin = (
+            profit / total_income
+        ) * Decimal("100")
+    else:
+        profit_margin = Decimal("0")
+
     return {
         "company_id": company.id,
         "currency": company.currency,
         "total_income": total_income,
         "total_expense": total_expense,
         "profit": profit,
+        "profit_margin": round(profit_margin, 2),
         "transaction_count": len(transactions)
     }
