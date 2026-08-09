@@ -58,6 +58,9 @@ SYSTEM_PROMPT = """
 9. Не придумывай финансовые показатели, которых нет в предоставленных данных.
 10. Если финансовых данных недостаточно для полноценного вывода, прямо указывай на это.
 11. При анализе прибыльности учитывай как абсолютную прибыль, так и маржинальность.
+12. При анализе расходов учитывай распределение расходов по категориям.
+13. Не называй категорию крупнейшей, если это не подтверждается предоставленными данными.
+14. Если данных мало, указывай, что вывод является предварительным.
 """
 
 
@@ -109,6 +112,35 @@ def get_financial_context(
     else:
         profit_margin = Decimal("0")
 
+    expenses_by_category = {}
+
+    for transaction in transactions:
+        if transaction.type != "expense":
+            continue
+
+        category = transaction.category
+
+        if category not in expenses_by_category:
+            expenses_by_category[category] = Decimal("0")
+
+        expenses_by_category[category] += transaction.amount
+
+    expenses_by_category = dict(
+        sorted(
+            expenses_by_category.items(),
+            key=lambda item: item[1],
+            reverse=True
+        )
+    )
+
+    if expenses_by_category:
+        expenses_text = "\n".join(
+            f"- {category}: {amount}"
+            for category, amount in expenses_by_category.items()
+        )
+    else:
+        expenses_text = "Расходов пока нет."
+
     return f"""
 ФИНАНСОВЫЙ КОНТЕКСТ КОМПАНИИ
 
@@ -121,6 +153,10 @@ def get_financial_context(
 Общий расход: {total_expense}
 Прибыль: {profit}
 Маржа прибыли: {profit_margin.quantize(Decimal("0.01"))}%
+
+РАСХОДЫ ПО КАТЕГОРИЯМ:
+
+{expenses_text}
 
 Используй эти цифры как фактические данные компании.
 Не придумывай другие финансовые показатели.
