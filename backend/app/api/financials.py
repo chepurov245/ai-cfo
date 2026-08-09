@@ -70,6 +70,27 @@ def get_financial_summary(
     else:
         profit_margin = Decimal("0")
 
+    expenses_by_category = {}
+
+    for transaction in transactions:
+        if transaction.type != "expense":
+            continue
+
+        category = transaction.category
+
+        if category not in expenses_by_category:
+            expenses_by_category[category] = Decimal("0")
+
+        expenses_by_category[category] += transaction.amount
+
+    expenses_by_category = dict(
+        sorted(
+            expenses_by_category.items(),
+            key=lambda item: item[1],
+            reverse=True
+        )
+    )
+
     return {
         "company_id": company.id,
         "currency": company.currency,
@@ -77,5 +98,6 @@ def get_financial_summary(
         "total_expense": total_expense,
         "profit": profit,
         "profit_margin": round(profit_margin, 2),
-        "transaction_count": len(transactions)
+        "transaction_count": len(transactions),
+        "expenses_by_category": expenses_by_category
     }
