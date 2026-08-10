@@ -2,7 +2,6 @@ import os
 import re
 from calendar import monthrange
 from datetime import datetime, timedelta
-from decimal import Decimal
 
 import openai
 from dotenv import load_dotenv
@@ -14,7 +13,14 @@ from app.memory.conversation_memory import (
     get_history,
 )
 from app.models.company import Company
-from app.models.transaction import Transaction
+from app.services.financial_service import (
+    calculate_cash_flow,
+    calculate_expenses_by_category,
+    calculate_kpi,
+    calculate_revenue_by_category,
+    calculate_summary,
+    get_transactions,
+)
 
 
 load_dotenv()
@@ -77,6 +83,41 @@ SYSTEM_PROMPT = """
 23. Не делай причинно-следственных выводов, которые нельзя подтвердить предоставленными финансовыми данными.
 24. Если за период нет транзакций, используй формулировку:
 "За этот период зарегистрированных финансовых операций не найдено."
+
+25. При вопросах о Cash Flow используй показатели:
+    - cash inflow;
+    - cash outflow;
+    - net cash flow.
+
+26. При вопросах о KPI используй только рассчитанные финансовые показатели.
+
+27. При вопросах о расходах используй распределение расходов по категориям.
+
+28. При вопросах о доходах используй распределение доходов по категориям.
+
+29. Не называй показатель прогнозом, если он рассчитан только по фактическим транзакциям.
+
+30. Не называй прибыль чистой прибылью, EBITDA или денежным остатком,
+    если соответствующий показатель отдельно не рассчитан.
+
+31. Если пользователь спрашивает о среднем размере транзакции,
+    используй фактическое количество транзакций и суммы,
+    предоставленные в финансовом контексте.
+
+32. Если пользователь спрашивает о нескольких финансовых показателях,
+    используй только соответствующие показатели из финансового контекста.
+
+33. Если финансовый контекст содержит данные за конкретный период,
+    не используй транзакции за другие периоды.
+
+34. Если финансовый контекст содержит два периода,
+    всегда разделяй показатели этих периодов.
+
+35. Не делай вывод о причинах изменения финансовых показателей,
+    если причина не подтверждается данными.
+
+36. Не утверждай, что показатель является "хорошим", "плохим",
+    "высоким" или "низким" без достаточного контекста для такого вывода.
 """
 
 
@@ -108,8 +149,12 @@ MONTHS = {
 }
 
 
-def get_month_number(month_name: str) -> int | None:
-    return MONTHS.get(month_name.lower())
+def get_month_number(
+    month_name: str,
+) -> int | None:
+    return MONTHS.get(
+        month_name.lower()
+    )
 
 
 def create_day_range(
@@ -138,9 +183,12 @@ def create_day_range(
     return start, end
 
 
-def parse_date_range(message: str):
+def parse_date_range(
+    message: str,
+):
     """
-    Определяет один финансовый период из сообщения пользователя.
+    Определяет один финансовый период
+    из сообщения пользователя.
 
     Поддерживаются:
 
@@ -178,7 +226,9 @@ def parse_date_range(message: str):
 
     # Вчера
     if "вчера" in text:
-        yesterday = now - timedelta(days=1)
+        yesterday = (
+            now - timedelta(days=1)
+        )
 
         start = yesterday.replace(
             hour=0,
@@ -216,19 +266,37 @@ def parse_date_range(message: str):
     )
 
     if range_match:
-        start_day = int(range_match.group(1))
-        start_month_name = range_match.group(2)
+        start_day = int(
+            range_match.group(1)
+        )
 
-        end_day = int(range_match.group(3))
-        end_month_name = range_match.group(4)
-        year_text = range_match.group(5)
+        start_month_name = (
+            range_match.group(2)
+        )
 
-        end_month = get_month_number(end_month_name)
+        end_day = int(
+            range_match.group(3)
+        )
+
+        end_month_name = (
+            range_match.group(4)
+        )
+
+        year_text = (
+            range_match.group(5)
+        )
+
+        end_month = get_month_number(
+            end_month_name
+        )
 
         if end_month:
+
             if start_month_name:
-                start_month = get_month_number(
-                    start_month_name
+                start_month = (
+                    get_month_number(
+                        start_month_name
+                    )
                 )
             else:
                 start_month = end_month
@@ -270,11 +338,21 @@ def parse_date_range(message: str):
     )
 
     if single_day_match:
-        day = int(single_day_match.group(1))
-        month_name = single_day_match.group(2)
-        year_text = single_day_match.group(3)
+        day = int(
+            single_day_match.group(1)
+        )
 
-        month = get_month_number(month_name)
+        month_name = (
+            single_day_match.group(2)
+        )
+
+        year_text = (
+            single_day_match.group(3)
+        )
+
+        month = get_month_number(
+            month_name
+        )
 
         if month:
             year = (
@@ -292,19 +370,27 @@ def parse_date_range(message: str):
     # За август 2026
     month_match = re.search(
         r"за\s+"
-        r"(январь|января|февраль|февраля|март|марта|"
-        r"апрель|апреля|май|мая|июнь|июня|июль|июля|"
-        r"август|августа|сентябрь|сентября|октябрь|октября|"
+        r"(январь|января|февраль|февраля|"
+        r"март|марта|апрель|апреля|май|мая|"
+        r"июнь|июня|июль|июля|август|августа|"
+        r"сентябрь|сентября|октябрь|октября|"
         r"ноябрь|ноября|декабрь|декабря)"
         r"(?:\s+(\d{4}))?",
         text,
     )
 
     if month_match:
-        month_name = month_match.group(1)
-        year_text = month_match.group(2)
+        month_name = (
+            month_match.group(1)
+        )
 
-        month = get_month_number(month_name)
+        year_text = (
+            month_match.group(2)
+        )
+
+        month = get_month_number(
+            month_name
+        )
 
         if month:
             year = (
@@ -341,13 +427,17 @@ def parse_date_range(message: str):
     return None, None
 
 
-def parse_comparison_periods(message: str):
+def parse_comparison_periods(
+    message: str,
+):
     """
-    Определяет два финансовых периода из запроса на сравнение.
+    Определяет два финансовых периода
+    из запроса на сравнение.
 
     Например:
 
-    "Сравни прибыль с 1 по 8 августа и за 9 августа"
+    "Сравни прибыль с 1 по 8 августа
+    и за 9 августа"
     """
 
     text = message.lower().strip()
@@ -381,12 +471,12 @@ def parse_comparison_periods(message: str):
         comparison_match.end():
     ]
 
-    first_start, first_end = parse_date_range(
-        left_part
+    first_start, first_end = (
+        parse_date_range(left_part)
     )
 
-    second_start, second_end = parse_date_range(
-        right_part
+    second_start, second_end = (
+        parse_date_range(right_part)
     )
 
     if (
@@ -409,109 +499,10 @@ def parse_comparison_periods(message: str):
     ]
 
 
-def calculate_financials(
-    db: Session,
-    company_id: int,
-    start_date: datetime | None = None,
-    end_date: datetime | None = None,
-):
-    """
-    Получает транзакции и рассчитывает
-    финансовые показатели.
-    """
-
-    query = (
-        db.query(Transaction)
-        .filter(
-            Transaction.company_id == company_id
-        )
-    )
-
-    if start_date:
-        query = query.filter(
-            Transaction.transaction_date >= start_date
-        )
-
-    if end_date:
-        query = query.filter(
-            Transaction.transaction_date <= end_date
-        )
-
-    transactions = query.all()
-
-    total_income = sum(
-        (
-            transaction.amount
-            for transaction in transactions
-            if transaction.type == "income"
-        ),
-        Decimal("0"),
-    )
-
-    total_expense = sum(
-        (
-            transaction.amount
-            for transaction in transactions
-            if transaction.type == "expense"
-        ),
-        Decimal("0"),
-    )
-
-    profit = (
-        total_income
-        - total_expense
-    )
-
-    if total_income > 0:
-        profit_margin = (
-            profit
-            / total_income
-        ) * Decimal("100")
-    else:
-        profit_margin = Decimal("0")
-
-    expenses_by_category = {}
-
-    for transaction in transactions:
-        if transaction.type != "expense":
-            continue
-
-        category = transaction.category
-
-        if category not in expenses_by_category:
-            expenses_by_category[category] = (
-                Decimal("0")
-            )
-
-        expenses_by_category[category] += (
-            transaction.amount
-        )
-
-    expenses_by_category = dict(
-        sorted(
-            expenses_by_category.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-    )
-
-    return {
-        "transactions": transactions,
-        "total_income": total_income,
-        "total_expense": total_expense,
-        "profit": profit,
-        "profit_margin": profit_margin,
-        "expenses_by_category": (
-            expenses_by_category
-        ),
-    }
-
-
 def format_period(
     start_date: datetime,
     end_date: datetime,
 ) -> str:
-
     return (
         f"{start_date.strftime('%d.%m.%Y %H:%M:%S')} "
         f"— "
@@ -541,32 +532,36 @@ def get_financial_context(
             "зарегистрированной компании."
         )
 
-    financials = calculate_financials(
+    transactions = get_transactions(
         db=db,
         company_id=company.id,
         start_date=start_date,
         end_date=end_date,
     )
 
-    transactions = financials["transactions"]
-    total_income = financials["total_income"]
-    total_expense = financials["total_expense"]
-    profit = financials["profit"]
-    profit_margin = financials["profit_margin"]
-    expenses_by_category = (
-        financials["expenses_by_category"]
+    summary = calculate_summary(
+        transactions
     )
 
-    if expenses_by_category:
-        expenses_text = "\n".join(
-            f"- {category}: {amount}"
-            for category, amount
-            in expenses_by_category.items()
+    cash_flow = calculate_cash_flow(
+        transactions
+    )
+
+    expenses = (
+        calculate_expenses_by_category(
+            transactions
         )
-    else:
-        expenses_text = (
-            "Расходов за выбранный период нет."
+    )
+
+    revenue = (
+        calculate_revenue_by_category(
+            transactions
         )
+    )
+
+    kpi = calculate_kpi(
+        transactions
+    )
 
     if start_date and end_date:
         period_text = format_period(
@@ -578,46 +573,121 @@ def get_financial_context(
             "за весь доступный период"
         )
 
+    if expenses:
+        expenses_text = "\n".join(
+            f"- {category}: {amount}"
+            for category, amount
+            in expenses.items()
+        )
+    else:
+        expenses_text = (
+            "Расходов за выбранный период нет."
+        )
+
+    if revenue:
+        revenue_text = "\n".join(
+            f"- {category}: {amount}"
+            for category, amount
+            in revenue.items()
+        )
+    else:
+        revenue_text = (
+            "Доходов за выбранный период нет."
+        )
+
+    if len(transactions) == 0:
+        transaction_note = (
+            "За этот период зарегистрированных "
+            "финансовых операций не найдено."
+        )
+    else:
+        transaction_note = (
+            "Финансовые операции за период найдены."
+        )
+
     return f"""
 ФИНАНСОВЫЙ КОНТЕКСТ КОМПАНИИ
 
-Компания: {company.name}
-Валюта: {company.currency}
+Компания:
+{company.name}
+
+Валюта:
+{company.currency}
 
 АНАЛИЗИРУЕМЫЙ ПЕРИОД:
 {period_text}
 
+ТРАНЗАКЦИИ
+
 Количество транзакций:
-{len(transactions)}
+{summary["transaction_count"]}
+
+Количество доходных транзакций:
+{kpi["income_transaction_count"]}
+
+Количество расходных транзакций:
+{kpi["expense_transaction_count"]}
+
+ПРИБЫЛЬНОСТЬ
 
 Общий доход:
-{total_income}
+{summary["total_income"]}
 
 Общий расход:
-{total_expense}
+{summary["total_expense"]}
 
 Прибыль:
-{profit}
+{summary["profit"]}
 
 Маржа прибыли:
-{profit_margin.quantize(Decimal("0.01"))}%
+{summary["profit_margin"]}%
 
-РАСХОДЫ ПО КАТЕГОРИЯМ:
+CASH FLOW
+
+Денежный приток:
+{cash_flow["cash_inflow"]}
+
+Денежный отток:
+{cash_flow["cash_outflow"]}
+
+Чистый денежный поток:
+{cash_flow["net_cash_flow"]}
+
+РАСХОДЫ ПО КАТЕГОРИЯМ
 
 {expenses_text}
 
-Используй эти цифры как фактические данные компании.
+ДОХОДЫ ПО КАТЕГОРИЯМ
 
-Если количество транзакций равно 0,
-сообщи пользователю:
+{revenue_text}
 
-"За этот период зарегистрированных
-финансовых операций не найдено."
+KPI
 
-Не утверждай, что бизнес не работал,
-если это не подтверждается данными.
+Средний доход на транзакцию:
+{kpi["average_income_transaction"]}
+
+Средний расход на транзакцию:
+{kpi["average_expense_transaction"]}
+
+Средний размер транзакции:
+{kpi["average_transaction"]}
+
+ИНФОРМАЦИЯ О ДАННЫХ
+
+{transaction_note}
+
+Используй эти показатели как фактические
+данные компании.
 
 Не придумывай другие финансовые показатели.
+
+Не смешивай данные с другими периодами.
+
+Не утверждай, что бизнес не работал,
+если за период нет транзакций.
+
+Отсутствие транзакций означает только
+отсутствие зарегистрированных финансовых операций.
 """
 
 
@@ -626,10 +696,6 @@ def get_comparison_context(
     user_id: int,
     periods,
 ) -> str:
-    """
-    Формирует финансовый контекст
-    для двух сравниваемых периодов.
-    """
 
     company = (
         db.query(Company)
@@ -649,43 +715,94 @@ def get_comparison_context(
     period_1_start, period_1_end = periods[0]
     period_2_start, period_2_end = periods[1]
 
-    financials_1 = calculate_financials(
+    transactions_1 = get_transactions(
         db=db,
         company_id=company.id,
         start_date=period_1_start,
         end_date=period_1_end,
     )
 
-    financials_2 = calculate_financials(
+    transactions_2 = get_transactions(
         db=db,
         company_id=company.id,
         start_date=period_2_start,
         end_date=period_2_end,
     )
 
+    financials_1 = calculate_summary(
+        transactions_1
+    )
+
+    financials_2 = calculate_summary(
+        transactions_2
+    )
+
+    cash_flow_1 = calculate_cash_flow(
+        transactions_1
+    )
+
+    cash_flow_2 = calculate_cash_flow(
+        transactions_2
+    )
+
+    expenses_1 = (
+        calculate_expenses_by_category(
+            transactions_1
+        )
+    )
+
+    expenses_2 = (
+        calculate_expenses_by_category(
+            transactions_2
+        )
+    )
+
+    revenue_1 = (
+        calculate_revenue_by_category(
+            transactions_1
+        )
+    )
+
+    revenue_2 = (
+        calculate_revenue_by_category(
+            transactions_2
+        )
+    )
+
+    kpi_1 = calculate_kpi(
+        transactions_1
+    )
+
+    kpi_2 = calculate_kpi(
+        transactions_2
+    )
+
+    def format_categories(
+        categories,
+        empty_text,
+    ):
+        if not categories:
+            return empty_text
+
+        return "\n".join(
+            f"- {category}: {amount}"
+            for category, amount
+            in categories.items()
+        )
+
     def format_financial_period(
         number: int,
         start_date: datetime,
         end_date: datetime,
-        financials: dict,
+        summary: dict,
+        cash_flow: dict,
+        expenses: dict,
+        revenue: dict,
+        kpi: dict,
+        transaction_count: int,
     ) -> str:
 
-        expenses_by_category = (
-            financials["expenses_by_category"]
-        )
-
-        if expenses_by_category:
-            expenses_text = "\n".join(
-                f"- {category}: {amount}"
-                for category, amount
-                in expenses_by_category.items()
-            )
-        else:
-            expenses_text = (
-                "Расходов нет."
-            )
-
-        if len(financials["transactions"]) == 0:
+        if transaction_count == 0:
             transaction_note = (
                 "За этот период зарегистрированных "
                 "финансовых операций не найдено."
@@ -705,25 +822,57 @@ def get_comparison_context(
 )}
 
 Количество транзакций:
-{len(financials["transactions"])}
+{transaction_count}
 
-Общий доход:
-{financials["total_income"]}
+Доход:
+{summary["total_income"]}
 
-Общий расход:
-{financials["total_expense"]}
+Расход:
+{summary["total_expense"]}
 
 Прибыль:
-{financials["profit"]}
+{summary["profit"]}
 
 Маржа прибыли:
-{financials["profit_margin"].quantize(Decimal("0.01"))}%
+{summary["profit_margin"]}%
+
+Cash Flow:
+
+Денежный приток:
+{cash_flow["cash_inflow"]}
+
+Денежный отток:
+{cash_flow["cash_outflow"]}
+
+Чистый денежный поток:
+{cash_flow["net_cash_flow"]}
 
 Расходы по категориям:
 
-{expenses_text}
+{format_categories(
+    expenses,
+    "Расходов нет.",
+)}
 
-Комментарий по данным:
+Доходы по категориям:
+
+{format_categories(
+    revenue,
+    "Доходов нет.",
+)}
+
+KPI:
+
+Средний доход на транзакцию:
+{kpi["average_income_transaction"]}
+
+Средний расход на транзакцию:
+{kpi["average_expense_transaction"]}
+
+Средний размер транзакции:
+{kpi["average_transaction"]}
+
+Комментарий:
 
 {transaction_note}
 """
@@ -731,16 +880,22 @@ def get_comparison_context(
     return f"""
 ФИНАНСОВЫЙ КОНТЕКСТ ДЛЯ СРАВНЕНИЯ
 
-Компания: {company.name}
-Валюта: {company.currency}
+Компания:
+{company.name}
 
-СРАВНИВАЕМЫЕ ПЕРИОДЫ:
+Валюта:
+{company.currency}
 
 {format_financial_period(
     1,
     period_1_start,
     period_1_end,
     financials_1,
+    cash_flow_1,
+    expenses_1,
+    revenue_1,
+    kpi_1,
+    len(transactions_1),
 )}
 
 {format_financial_period(
@@ -748,25 +903,51 @@ def get_comparison_context(
     period_2_start,
     period_2_end,
     financials_2,
+    cash_flow_2,
+    expenses_2,
+    revenue_2,
+    kpi_2,
+    len(transactions_2),
 )}
 
 ВАЖНЫЕ ПРАВИЛА:
 
 1. Каждый период анализируй отдельно.
+
 2. Не смешивай транзакции разных периодов.
+
 3. Используй только предоставленные цифры.
+
 4. Если в периоде нет транзакций,
    сообщи только об отсутствии
    зарегистрированных финансовых операций.
+
 5. Не утверждай, что бизнес не работал,
    если это не подтверждается данными.
+
 6. Не утверждай, что не было продаж,
    если это не подтверждается данными.
+
 7. Не утверждай, что компания была неактивна,
    если это не подтверждается данными.
+
 8. При сравнении можешь показать
    абсолютную разницу между показателями.
-9. Не придумывай отсутствующие показатели.
+
+9. Можешь сравнивать:
+   - доход;
+   - расход;
+   - прибыль;
+   - маржу;
+   - Cash Flow;
+   - категории расходов;
+   - категории доходов;
+   - KPI.
+
+10. Не придумывай отсутствующие показатели.
+
+11. Не делай вывод о причинах изменения
+    показателей без подтверждающих данных.
 """
 
 
@@ -790,9 +971,11 @@ def ask_ai(
         user_id=user_id,
     )
 
-    # Проверяем сравнение двух периодов
+    # Определяем сравнение периодов
     comparison_periods = (
-        parse_comparison_periods(message)
+        parse_comparison_periods(
+            message
+        )
     )
 
     if comparison_periods:
@@ -807,9 +990,11 @@ def ask_ai(
 
     else:
 
-        # Обычный запрос с одним периодом
+        # Определяем обычный период
         start_date, end_date = (
-            parse_date_range(message)
+            parse_date_range(
+                message
+            )
         )
 
         financial_context = (
@@ -836,9 +1021,11 @@ def ask_ai(
 
     try:
 
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=messages,
+        response = (
+            client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=messages,
+            )
         )
 
         reply = (
