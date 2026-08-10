@@ -36,7 +36,11 @@ def validate_date_range(
     start_date: datetime | None,
     end_date: datetime | None,
 ) -> None:
-    if start_date and end_date and start_date > end_date:
+    if (
+        start_date
+        and end_date
+        and start_date > end_date
+    ):
         raise HTTPException(
             status_code=400,
             detail="start_date must be before end_date",
@@ -301,4 +305,153 @@ def calculate_kpi(
         ),
         "profit": summary["profit"],
         "profit_margin": summary["profit_margin"],
+    }
+
+
+def calculate_forecast(
+    transactions,
+    forecast_days: int,
+):
+    """
+    Рассчитывает простой прогноз на основе
+    средней дневной финансовой активности.
+
+    Прогноз не является фактическими данными
+    и не записывается в transactions.
+    """
+
+    if forecast_days <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="forecast_days must be greater than 0",
+        )
+
+    if not transactions:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Forecast cannot be calculated "
+                "because there are no transactions."
+            ),
+        )
+
+    first_transaction_date = min(
+        transaction.transaction_date
+        for transaction in transactions
+    )
+
+    last_transaction_date = max(
+        transaction.transaction_date
+        for transaction in transactions
+    )
+
+    historical_days = (
+        last_transaction_date.date()
+        - first_transaction_date.date()
+    ).days + 1
+
+    if historical_days <= 0:
+        historical_days = 1
+
+    total_income = sum(
+        (
+            transaction.amount
+            for transaction in transactions
+            if transaction.type == "income"
+        ),
+        Decimal("0"),
+    )
+
+    total_expense = sum(
+        (
+            transaction.amount
+            for transaction in transactions
+            if transaction.type == "expense"
+        ),
+        Decimal("0"),
+    )
+
+    historical_profit = (
+        total_income
+        - total_expense
+    )
+
+    average_daily_income = (
+        total_income
+        / Decimal(str(historical_days))
+    )
+
+    average_daily_expense = (
+        total_expense
+        / Decimal(str(historical_days))
+    )
+
+    average_daily_profit = (
+        historical_profit
+        / Decimal(str(historical_days))
+    )
+
+    forecast_income = (
+        average_daily_income
+        * Decimal(str(forecast_days))
+    )
+
+    forecast_expense = (
+        average_daily_expense
+        * Decimal(str(forecast_days))
+    )
+
+    forecast_profit = (
+        forecast_income
+        - forecast_expense
+    )
+
+    forecast_net_cash_flow = (
+        forecast_profit
+    )
+
+    if historical_days < 7:
+        confidence = "low"
+    elif historical_days < 30:
+        confidence = "medium"
+    else:
+        confidence = "high"
+
+    return {
+        "historical_days": historical_days,
+        "historical_start_date": (
+            first_transaction_date
+        ),
+        "historical_end_date": (
+            last_transaction_date
+        ),
+        "confidence": confidence,
+        "average_daily_income": round(
+            average_daily_income,
+            2,
+        ),
+        "average_daily_expense": round(
+            average_daily_expense,
+            2,
+        ),
+        "average_daily_profit": round(
+            average_daily_profit,
+            2,
+        ),
+        "forecast_income": round(
+            forecast_income,
+            2,
+        ),
+        "forecast_expense": round(
+            forecast_expense,
+            2,
+        ),
+        "forecast_profit": round(
+            forecast_profit,
+            2,
+        ),
+        "forecast_net_cash_flow": round(
+            forecast_net_cash_flow,
+            2,
+        ),
     }

@@ -9,6 +9,7 @@ from app.models.user import User
 from app.services.financial_service import (
     calculate_cash_flow,
     calculate_expenses_by_category,
+    calculate_forecast,
     calculate_kpi,
     calculate_revenue_by_category,
     calculate_summary,
@@ -318,4 +319,37 @@ def get_financial_kpi(
         "start_date": start_date,
         "end_date": end_date,
         **kpi,
+    }
+
+
+@router.get("/forecast")
+def get_financial_forecast(
+    company_id: int,
+    forecast_days: int = 30,
+    current_user: User = Depends(
+        get_current_user
+    ),
+    db: Session = Depends(get_db),
+):
+    company = get_company(
+        db=db,
+        company_id=company_id,
+        current_user=current_user,
+    )
+
+    transactions = get_transactions(
+        db=db,
+        company_id=company.id,
+    )
+
+    forecast = calculate_forecast(
+        transactions=transactions,
+        forecast_days=forecast_days,
+    )
+
+    return {
+        "company_id": company.id,
+        "currency": company.currency,
+        "forecast_days": forecast_days,
+        **forecast,
     }
